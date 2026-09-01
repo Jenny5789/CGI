@@ -19,17 +19,21 @@ import cv2
 import numpy as np
 
 
-def soft_alpha(mask_255_resized, blur_px=2.0):
-    # mask_255_resized is the binary mask (scaled to 0/255 so a uint8
-    # LANCZOS4 downsize actually gets intermediate values instead of
-    # rounding straight back to 0/1) after a high-quality resize, which
-    # already interpolates smooth values right at the boundary. A small
-    # extra blur softens that further -- much safer than full alpha
-    # matting, which failed on this photo (mostly erased the object
-    # instead of just softening its edge).
-    alpha = mask_255_resized.astype(np.float32) / 255.0
-    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=blur_px)
-    return np.clip(alpha, 0, 1)
+def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=10):
+    # Feather at FULL resolution, then downsize -- not the other way around.
+    # Blurring *after* a ~15x downsize (as this used to do) makes a small
+    # sigma cover a proportionally huge area of the tiny image, pulling
+    # alpha from rows well below (e.g. the wide part of the ear) up into
+    # rows near the top (the ear tip) that shouldn't have much alpha yet.
+    # That mismatch -- high alpha with no matching object detail -- is what
+    # showed up as a translucent rectangular patch above the head. Blurring
+    # at full res keeps the feather physically proportional (~10px at full
+    # res becomes under 1px after a 15x downsize), then INTER_AREA is the
+    # correct filter for a large downsize (no LANCZOS ringing).
+    mask_f = (mask_crop_01 * 255).astype(np.float32)
+    mask_f = cv2.GaussianBlur(mask_f, (0, 0), sigmaX=blur_px_fullres)
+    mask_resized = cv2.resize(mask_f, (box_w, box_h), interpolation=cv2.INTER_AREA)
+    return np.clip(mask_resized / 255.0, 0, 1)
 
 
 def add_soft_shadow(bg_rgb, box, alpha, strength=0.35):
@@ -82,9 +86,8 @@ def main():
           f'center=({(x1+x2)//2},{(y1+y2)//2}), frac_center=({cx_frac},{cy_frac})')
 
     print('Compositing...')
-    obj_resized = cv2.resize(obj_crop, (box_w, box_h), interpolation=cv2.INTER_LANCZOS4)
-    mask_resized = cv2.resize(mask_crop * 255, (box_w, box_h), interpolation=cv2.INTER_LANCZOS4)
-    alpha = soft_alpha(mask_resized)
+    obj_resized = cv2.resize(obj_crop, (box_w, box_h), interpolation=cv2.INTER_AREA)
+    alpha = soft_alpha_mask(mask_crop, box_w, box_h)
 
     out = add_soft_shadow(bg_image, (y1, y2, x1, x2), alpha)
     region = out[y1:y2, x1:x2].astype(np.float32)
