@@ -19,11 +19,12 @@ import cv2
 import numpy as np
 
 
-def feathered_alpha(mask, feather_px=4):
-    mask_f = mask.astype(np.float32)
-    dist_in = cv2.distanceTransform((mask_f > 0).astype(np.uint8), cv2.DIST_L2, 5)
-    alpha = np.clip(dist_in / feather_px, 0, 1)
-    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=1.0)
+def soft_alpha(mask_alpha_255, blur_sigma=0.6):
+    # mask_alpha_255 is rembg's continuous matting alpha (0-255), already
+    # soft/anti-aliased over the true boundary -- just normalize it and
+    # smooth out any resize aliasing, no synthetic feathering needed.
+    alpha = mask_alpha_255.astype(np.float32) / 255.0
+    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=blur_sigma)
     return np.clip(alpha, 0, 1)
 
 
@@ -58,7 +59,7 @@ def main():
     print('Segmenting object...')
     ref_image, ref_mask = segment_object(object_path)
 
-    ys, xs = np.where(ref_mask > 0)
+    ys, xs = np.where(ref_mask > 20)
     y1o, y2o, x1o, x2o = ys.min(), ys.max(), xs.min(), xs.max()
     obj_crop = ref_image[y1o:y2o, x1o:x2o]
     mask_crop = ref_mask[y1o:y2o, x1o:x2o]
@@ -73,10 +74,8 @@ def main():
 
     print('Compositing...')
     obj_resized = cv2.resize(obj_crop, (box_w, box_h), interpolation=cv2.INTER_LANCZOS4)
-    mask_resized = cv2.resize(mask_crop, (box_w, box_h), interpolation=cv2.INTER_NEAREST)
-    # Only a few pixels right at the silhouette edge get blended -- everything
-    # farther than feather_px inside the mask stays 100% original object pixel.
-    alpha = feathered_alpha(mask_resized, feather_px=3)
+    mask_resized = cv2.resize(mask_crop, (box_w, box_h), interpolation=cv2.INTER_LANCZOS4)
+    alpha = soft_alpha(mask_resized)
 
     out = add_soft_shadow(bg_image, (y1, y2, x1, x2), alpha)
     region = out[y1:y2, x1:x2].astype(np.float32)
