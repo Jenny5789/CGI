@@ -1,4 +1,5 @@
 .venv/
+.venv-seg/
 checkpoints/
 data/outputs/
 *.log
