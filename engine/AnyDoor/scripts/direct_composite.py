@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 
-def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=28):
+def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=42):
     # Feather at FULL resolution, then downsize -- not the other way around.
     # Blurring *after* a ~15x downsize (as this used to do) makes a small
     # sigma cover a proportionally huge area of the tiny image, pulling
@@ -36,7 +36,7 @@ def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=28):
     return np.clip(mask_resized / 255.0, 0, 1)
 
 
-def apply_edge_light_bleed(obj_rgb, alpha, bg_region, strength=0.4):
+def apply_edge_light_bleed(obj_rgb, alpha, bg_region, strength=0.45):
     # Real photographed edges pick up a sliver of ambient/reflected color
     # from whatever's around them -- a hard cutout never does, which is a
     # classic "pasted" tell even with a perfectly soft alpha. Fake it by
