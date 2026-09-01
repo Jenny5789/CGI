@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 
-def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=10):
+def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=28):
     # Feather at FULL resolution, then downsize -- not the other way around.
     # Blurring *after* a ~15x downsize (as this used to do) makes a small
     # sigma cover a proportionally huge area of the tiny image, pulling
@@ -34,6 +34,19 @@ def soft_alpha_mask(mask_crop_01, box_w, box_h, blur_px_fullres=10):
     mask_f = cv2.GaussianBlur(mask_f, (0, 0), sigmaX=blur_px_fullres)
     mask_resized = cv2.resize(mask_f, (box_w, box_h), interpolation=cv2.INTER_AREA)
     return np.clip(mask_resized / 255.0, 0, 1)
+
+
+def apply_edge_light_bleed(obj_rgb, alpha, bg_region, strength=0.4):
+    # Real photographed edges pick up a sliver of ambient/reflected color
+    # from whatever's around them -- a hard cutout never does, which is a
+    # classic "pasted" tell even with a perfectly soft alpha. Fake it by
+    # blending a bit of the background's own color into the object only in
+    # a thin band right at the silhouette boundary (alpha ~0.5), tapering to
+    # nothing both in the solid interior (alpha~1) and out in clean
+    # background (alpha~0) -- interior detail (fur) is left untouched.
+    rim_weight = 4.0 * alpha * (1.0 - alpha)  # 0 at alpha=0/1, peaks at alpha=0.5
+    rim_weight = (rim_weight * strength)[..., None]
+    return obj_rgb.astype(np.float32) * (1 - rim_weight) + bg_region.astype(np.float32) * rim_weight
 
 
 def add_soft_shadow(bg_rgb, box, alpha, strength=0.35):
@@ -91,7 +104,8 @@ def main():
 
     out = add_soft_shadow(bg_image, (y1, y2, x1, x2), alpha)
     region = out[y1:y2, x1:x2].astype(np.float32)
-    blended = region * (1 - alpha[..., None]) + obj_resized.astype(np.float32) * alpha[..., None]
+    obj_resized = apply_edge_light_bleed(obj_resized, alpha, region)
+    blended = region * (1 - alpha[..., None]) + obj_resized * alpha[..., None]
     out[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
 
     cv2.imwrite(save_path, cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
