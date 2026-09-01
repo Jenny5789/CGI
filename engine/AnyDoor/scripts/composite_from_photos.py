@@ -23,35 +23,27 @@ from rembg import remove, new_session
 
 
 def segment_object(object_path):
-    """Returns (rgb uint8, alpha uint8 0-255).
+    """Returns (rgb uint8, mask uint8 0/1).
 
-    Uses rembg's alpha-matting mode instead of a hard threshold: a plain
-    U2Net mask cuts the silhouette at a hard 0/1 boundary, which leaves a
-    fringe of background-color-contaminated edge pixels that reads as a
-    strong outline once pasted onto a different-colored background. Matting
-    estimates a soft, color-corrected alpha over the true (fuzzy) boundary
-    instead, which is what actually removes that outline.
+    Plain U2Net threshold mask -- rembg's alpha_matting mode was tried here
+    and failed badly on this photo (pymatting's trimap came out mostly
+    "unknown"/background, erasing most of the bear instead of softening its
+    edge). This plain mask is the one that was actually verified to look
+    right; edge softening is done separately, downstream, on top of it.
     """
     with open(object_path, 'rb') as f:
         input_bytes = f.read()
     session = new_session('u2net')
-    output_bytes = remove(
-        input_bytes,
-        session=session,
-        alpha_matting=True,
-        alpha_matting_foreground_threshold=240,
-        alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=8,
-    )
+    output_bytes = remove(input_bytes, session=session)
     rgba = cv2.imdecode(np.frombuffer(output_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
-    alpha = rgba[:, :, 3]
+    mask = (rgba[:, :, 3] > 128).astype(np.uint8)
     bgr = rgba[:, :, :3]
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    return rgb, alpha
+    return rgb, mask
 
 
 def get_mask_aspect_ratio(ref_mask):
-    ys, xs = np.where(ref_mask > 20)
+    ys, xs = np.where(ref_mask > 0)
     box_w = xs.max() - xs.min()
     box_h = ys.max() - ys.min()
     return box_w / box_h
@@ -96,8 +88,7 @@ def main():
 
     from run_inference import inference_single_image
     print('Running AnyDoor composite...')
-    ref_mask_bin = (ref_mask > 128).astype(np.uint8)
-    gen_image = inference_single_image(ref_image, ref_mask_bin, bg_image.copy(), tar_mask)
+    gen_image = inference_single_image(ref_image, ref_mask, bg_image.copy(), tar_mask)
 
     cv2.imwrite(save_path, cv2.cvtColor(gen_image.astype(np.uint8), cv2.COLOR_RGB2BGR))
     print('SAVED', save_path)
