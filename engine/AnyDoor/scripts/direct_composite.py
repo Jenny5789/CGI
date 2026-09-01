@@ -67,13 +67,36 @@ def add_soft_shadow(bg_rgb, box, alpha, strength=0.35):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def seamless_edge_blend(bg_image, obj_resized, mask_resized, x1, y1, box_w, box_h):
+    # Poisson blending (cv2.seamlessClone): keeps the object's own interior
+    # gradients (fur texture) intact while solving for a seam at the mask
+    # boundary that matches the destination's colors -- much less visible
+    # than a feathered-alpha edge.
+    pad = max(15, int(min(box_w, box_h) * 0.08))
+    src = np.zeros((box_h + 2 * pad, box_w + 2 * pad, 3), dtype=np.uint8)
+    src[pad:pad + box_h, pad:pad + box_w] = obj_resized
+    mask = np.zeros((box_h + 2 * pad, box_w + 2 * pad), dtype=np.uint8)
+    mask[pad:pad + box_h, pad:pad + box_w] = (mask_resized * 255).astype(np.uint8)
+
+    cx = x1 + box_w // 2
+    cy = y1 + box_h // 2
+    h, w = bg_image.shape[:2]
+    cx = min(max(cx, pad + 1), w - pad - 1)
+    cy = min(max(cy, pad + 1), h - pad - 1)
+
+    bg_bgr = cv2.cvtColor(bg_image, cv2.COLOR_RGB2BGR)
+    src_bgr = cv2.cvtColor(src, cv2.COLOR_RGB2BGR)
+    out_bgr = cv2.seamlessClone(src_bgr, bg_bgr, mask, (cx, cy), cv2.NORMAL_CLONE)
+    return cv2.cvtColor(out_bgr, cv2.COLOR_BGR2RGB)
+
+
 def main():
     object_path = sys.argv[1]
     bg_path = sys.argv[2]
     save_path = sys.argv[3]
-    box_h_frac = float(sys.argv[4]) if len(sys.argv) > 4 else 0.75
+    box_h_frac = float(sys.argv[4]) if len(sys.argv) > 4 else 0.45
     cx_frac = float(sys.argv[5]) if len(sys.argv) > 5 else 0.5
-    cy_frac = float(sys.argv[6]) if len(sys.argv) > 6 else 0.62
+    cy_frac = float(sys.argv[6]) if len(sys.argv) > 6 else 0.68
 
     print('Segmenting object...')
     ref_image, ref_mask = segment_object(object_path)
@@ -100,9 +123,7 @@ def main():
     obj_resized = match_lighting(obj_resized, alpha, bg_region)
 
     out = add_soft_shadow(bg_image, (y1, y2, x1, x2), alpha)
-    region = out[y1:y2, x1:x2].astype(np.float32)
-    blended = region * (1 - alpha[..., None]) + obj_resized.astype(np.float32) * alpha[..., None]
-    out[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
+    out = seamless_edge_blend(out, obj_resized, mask_resized, x1, y1, box_w, box_h)
 
     cv2.imwrite(save_path, cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
     print('SAVED', save_path)
