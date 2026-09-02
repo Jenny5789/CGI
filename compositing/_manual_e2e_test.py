@@ -1,10 +1,10 @@
-"""Manual end-to-end smoke test chaining the 5 implemented stages.
+"""Manual end-to-end smoke test chaining the implemented stages.
 
 Not a permanent pipeline entrypoint (that's pipeline.py, not yet built) --
-just wires segmentation -> matting -> decontaminate -> transform -> composite
-by hand so we can see where things stand before scene_analysis/adaptation/
-physical_integration exist. No color/lighting/shadow correction happens
-here yet -- that's the known, expected gap.
+just wires segmentation -> matting -> decontaminate -> transform ->
+adaptation -> composite by hand so we can see where things stand before
+physical_integration exists. No shadow/AO correction happens here yet --
+that's the known, expected remaining gap.
 """
 import os
 import sys
@@ -17,11 +17,12 @@ from compositing.segmentation import segment
 from compositing.matting import matte
 from compositing.decontaminate import decontaminate
 from compositing.transform import Placement, transform_subject
+from compositing.adaptation import match_appearance
 from compositing.composite import alpha_composite
 
 OBJECT_PATH = "data/objects/bear.jpg"
 BG_PATH = "data/backgrounds/beach.jpg"
-OUT_PATH = "data/outputs/compositing_pkg_e2e_test_v2.png"
+OUT_PATH = "data/outputs/compositing_pkg_e2e_test_v3.png"
 
 print("Loading images...")
 photo = cv2.cvtColor(cv2.imread(OBJECT_PATH), cv2.COLOR_BGR2RGB)
@@ -66,8 +67,11 @@ placement = Placement(
 )
 result = transform_subject(clean_rgb, alpha, (bg_w, bg_h), placement)
 
+print("[7] Adapting color/exposure to the background...")
+adapted_rgb = match_appearance(result.rgb, result.alpha, bg, result.bbox, strength=0.5)
+
 print("[10] Compositing...")
-final = alpha_composite(bg, result.rgb, result.alpha)
+final = alpha_composite(bg, adapted_rgb, result.alpha)
 
 cv2.imwrite(OUT_PATH, cv2.cvtColor(final, cv2.COLOR_RGB2BGR))
 print("SAVED", OUT_PATH)
