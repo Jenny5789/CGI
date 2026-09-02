@@ -95,15 +95,34 @@ def transform_subject(fg_rgb, fg_alpha, canvas_size, placement: Placement) -> Tr
         crop_rgb = cv2.flip(crop_rgb, 1)
         crop_alpha = cv2.flip(crop_alpha, 1)
 
+    # warpAffine's INTER_LINEAR does not prefilter before decimating, so a
+    # large scale-down (this project's crops are typically photographed at
+    # >1500px and placed at a couple hundred px, i.e. often >5x reduction)
+    # aliases badly -- fine texture like fur comes out as speckled noise
+    # rather than a clean silhouette. Pre-shrink with INTER_AREA (the
+    # correct filter for a large reduction; already relied on elsewhere in
+    # this codebase for the same reason) to get close to the final size
+    # first, then let warpAffine handle only the residual scale + rotation
+    # + exact sub-pixel placement on the already-downsized image.
+    residual_scale = placement.scale
+    if placement.scale < 0.95:
+        new_w = max(1, round(crop_w * placement.scale))
+        new_h = max(1, round(crop_h * placement.scale))
+        crop_rgb = cv2.resize(crop_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        crop_alpha = cv2.resize(crop_alpha, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        crop_h, crop_w = new_h, new_w
+        residual_scale = 1.0
+
     gx = placement.grounding_point[0] * crop_w
     gy = placement.grounding_point[1] * crop_h
 
-    # One affine transform: rotate + scale about the grounding point, then
-    # translate so the grounding point lands exactly at `placement.position`
-    # in canvas coordinates. Doing this as a single warpAffine (rather than
-    # crop->paste by hand) keeps sub-pixel rotation/scale mathematically
-    # exact instead of accumulating separate rounding errors per step.
-    M = cv2.getRotationMatrix2D((gx, gy), placement.rotation_deg, placement.scale)
+    # One affine transform: rotate + (residual) scale about the grounding
+    # point, then translate so the grounding point lands exactly at
+    # `placement.position` in canvas coordinates. Doing this as a single
+    # warpAffine (rather than crop->paste by hand) keeps sub-pixel
+    # rotation/scale mathematically exact instead of accumulating separate
+    # rounding errors per step.
+    M = cv2.getRotationMatrix2D((gx, gy), placement.rotation_deg, residual_scale)
     M[0, 2] += placement.position[0] - gx
     M[1, 2] += placement.position[1] - gy
 
