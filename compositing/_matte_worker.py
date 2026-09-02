@@ -27,10 +27,24 @@ CHECKPOINT_DIR = os.path.join(
 
 
 def make_trimap(mask_binary, unknown_band_px=15):
+    # Close small internal holes first (e.g. a textured surface -- soil in
+    # a pot, mottled fur -- can come back from segmentation full of tiny
+    # false gaps). Without this, eroding for "sure foreground" shrinks each
+    # speckle-bounded island individually and leaves most of a textured
+    # region in the "unknown" band instead of just its true outer edge;
+    # ViTMatte then has to resolve that whole interior itself, and for a
+    # region that's genuinely low-contrast against its background (e.g. a
+    # white pot on a white backdrop) it can resolve toward background --
+    # i.e. erase the object's interior, confirmed on the plant-pot fixture.
+    # The unknown band should track the real silhouette boundary, not
+    # texture noise inside it.
+    close_kernel = np.ones((31, 31), np.uint8)
+    solid_mask = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, close_kernel)
+
     kernel = np.ones((3, 3), np.uint8)
     iterations = max(1, unknown_band_px // 3)
-    sure_fg = cv2.erode(mask_binary, kernel, iterations=iterations)
-    sure_bg = cv2.erode(1 - mask_binary, kernel, iterations=iterations)
+    sure_fg = cv2.erode(solid_mask, kernel, iterations=iterations)
+    sure_bg = cv2.erode(1 - solid_mask, kernel, iterations=iterations)
     trimap = np.full(mask_binary.shape, 128, dtype=np.uint8)  # unknown by default
     trimap[sure_fg > 0] = 255
     trimap[sure_bg > 0] = 0

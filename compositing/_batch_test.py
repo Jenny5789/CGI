@@ -19,6 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cv2
+import numpy as np
 
 from compositing.segmentation import segment
 from compositing.matting import matte
@@ -30,6 +31,26 @@ from compositing.composite import alpha_composite
 OUT_DIR = "data/outputs/batch"
 os.makedirs(OUT_DIR, exist_ok=True)
 
+
+def tighten_alpha(alpha, erode_px=2):
+    """Shrinks the alpha boundary inward by a couple pixels.
+
+    Cuts off the outermost, lowest-confidence ring of alpha -- exactly the
+    pixels most likely to still carry background-color spill that
+    decontaminate() can't fully correct when the subject's own color is
+    very close to its background's (e.g. a cream-colored puppy against a
+    white backdrop: decontaminate()'s math divides by alpha and multiplies
+    by (fg - bg) color difference, both of which go unstable/near-zero
+    exactly when fg and bg colors nearly match, so contamination there
+    isn't something that step can fully undo on its own). Trades a little
+    edge softness/fine wisp detail for removing a visible light-colored
+    halo -- not a substitute for decontaminate(), a complement to it.
+    """
+    kernel = np.ones((3, 3), np.uint8)
+    alpha_u8 = (np.clip(alpha, 0, 1) * 255).astype(np.uint8)
+    eroded = cv2.erode(alpha_u8, kernel, iterations=erode_px)
+    return eroded.astype(np.float32) / 255.0
+
 CASES = [
     # target_h_frac: rough real-world-plausible fraction of background
     # height (a puppy shouldn't be as tall as a person; a floating product
@@ -38,7 +59,7 @@ CASES = [
     # what the object actually is (first version of this script) is exactly
     # how a puppy ended up rendered person-sized.
     {"name": "dog_livingroom", "object": "data/objects/dog.jpg", "point": (600, 850),
-     "bg": "data/backgrounds/living_room.jpg", "target_h_frac": 0.30, "grounding": (0.5, 1.0), "pos_y_frac": 0.85},
+     "bg": "data/backgrounds/living_room.jpg", "target_h_frac": 0.06, "grounding": (0.5, 1.0), "pos_y_frac": 0.85},
     # A single point on a person's torso is ambiguous (does it mean "the
     # shirt", "the torso", "the whole person"?) -- confirmed by inspecting
     # SAM2's raw candidates: the highest-confidence one only covered ~6% of
@@ -54,7 +75,11 @@ CASES = [
     # candidate that turned out to be a noisy garbage mask, 53%-of-frame] --
     # none usable. A box around the whole plant (leaves+pot), same fix
     # pattern as the person case above, gave a clean result instead.
-    {"name": "plant_forest", "object": "data/objects/plant.jpg", "box": (350, 100, 1280, 1900),
+    # Box widened to the actual bottom of the photo (1998, not 1900) --
+    # the previous box cut off part of the pot, so the mask only captured
+    # leaves+partial pot. A "complete" object extraction here means the
+    # pot comes along too, not just the plant growing out of it.
+    {"name": "plant_forest", "object": "data/objects/plant.jpg", "box": (350, 100, 1280, 1998),
      "bg": "data/backgrounds/forest_path.jpg", "target_h_frac": 0.35, "grounding": (0.5, 1.0), "pos_y_frac": 0.88},
 ]
 
@@ -74,6 +99,7 @@ for case in CASES:
 
         print("  [3] matting...")
         alpha = matte(photo, mask)
+        alpha = tighten_alpha(alpha, erode_px=2)
 
         print("  [4] decontaminating + grain reduction...")
         clean_rgb = decontaminate(photo, alpha)

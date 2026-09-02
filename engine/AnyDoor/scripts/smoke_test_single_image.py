@@ -8,7 +8,7 @@ from run_inference import inference_single_image
 reference_image_path = './examples/TestDreamBooth/FG/01.png'
 bg_image_path = './examples/TestDreamBooth/BG/000000309203_GT.png'
 bg_mask_path = './examples/TestDreamBooth/BG/000000309203_mask.png'
-save_path = './examples/TestDreamBooth/GEN/smoke_test_res.png'
+save_path = '../../data/outputs/anydoor_smoke_test_res.png'
 
 image = cv2.imread(reference_image_path, cv2.IMREAD_UNCHANGED)
 mask = (image[:, :, -1] > 128).astype('uint8')
