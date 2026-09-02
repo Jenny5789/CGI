@@ -57,7 +57,25 @@ def main():
     with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=(device == "cuda")):
         masks, scores, _ = predictor.predict(**kwargs, multimask_output=True)
 
-    best = masks[int(np.argmax(scores))]
+    # SAM2's own confidence score is NOT reliable to argmax over blindly: for
+    # a point near a thin/small structure against a large uniform backdrop
+    # (a leaf against a plain product-photo background, say), the "grab
+    # almost the whole frame" candidate can score HIGHER than the correctly-
+    # sized one (confirmed on a real case: a candidate covering 80% of the
+    # frame scored 0.99 while the ~11%-of-frame candidate that was actually
+    # the subject scored 0.18). A hero-shot extraction almost never wants a
+    # region that big -- filter those out before ranking by score, with the
+    # smallest candidate as a fallback if every candidate is implausibly
+    # large (e.g. a genuine close-up/macro shot).
+    MAX_PLAUSIBLE_AREA_FRAC = 0.35
+    areas = np.array([m.sum() / m.size for m in masks])
+    plausible = areas <= MAX_PLAUSIBLE_AREA_FRAC
+    if plausible.any():
+        candidate_idx = np.where(plausible)[0]
+        best_idx = candidate_idx[np.argmax(scores[candidate_idx])]
+    else:
+        best_idx = int(np.argmin(areas))
+    best = masks[best_idx]
     cv2.imwrite(args.out_mask_path, (best.astype(np.uint8) * 255))
     print("SAVED", args.out_mask_path)
 

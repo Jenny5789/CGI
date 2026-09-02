@@ -31,10 +31,31 @@ OUT_DIR = "data/outputs/batch"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 CASES = [
-    {"name": "dog_livingroom", "object": "data/objects/dog.jpg", "point": (600, 850), "bg": "data/backgrounds/living_room.jpg"},
-    {"name": "person_citystreet", "object": "data/objects/person.jpg", "point": (800, 1300), "bg": "data/backgrounds/city_street.jpg"},
-    {"name": "sneaker_studio", "object": "data/objects/sneaker.jpg", "point": (800, 950), "bg": "data/backgrounds/studio_gray.jpg"},
-    {"name": "plant_forest", "object": "data/objects/plant.jpg", "point": (1050, 1000), "bg": "data/backgrounds/forest_path.jpg"},
+    # target_h_frac: rough real-world-plausible fraction of background
+    # height (a puppy shouldn't be as tall as a person; a floating product
+    # shot doesn't have "feet" so it's grounded at frame-center instead of
+    # frame-bottom). Picking one fixed fraction for every case regardless of
+    # what the object actually is (first version of this script) is exactly
+    # how a puppy ended up rendered person-sized.
+    {"name": "dog_livingroom", "object": "data/objects/dog.jpg", "point": (600, 850),
+     "bg": "data/backgrounds/living_room.jpg", "target_h_frac": 0.30, "grounding": (0.5, 1.0), "pos_y_frac": 0.85},
+    # A single point on a person's torso is ambiguous (does it mean "the
+    # shirt", "the torso", "the whole person"?) -- confirmed by inspecting
+    # SAM2's raw candidates: the highest-confidence one only covered ~6% of
+    # the frame (torso-only), not the full standing figure. A box anchors
+    # the intended extent explicitly; this is standard SAM2 usage, not a
+    # person-specific hack.
+    {"name": "person_citystreet", "object": "data/objects/person.jpg", "box": (500, 120, 1080, 2400),
+     "bg": "data/backgrounds/city_street.jpg", "target_h_frac": 0.75, "grounding": (0.5, 1.0), "pos_y_frac": 0.90},
+    {"name": "sneaker_studio", "object": "data/objects/sneaker.jpg", "point": (800, 950),
+     "bg": "data/backgrounds/studio_gray.jpg", "target_h_frac": 0.30, "grounding": (0.5, 0.5), "pos_y_frac": 0.5},
+    # A single point on this plant's thin leaf was fundamentally unstable --
+    # SAM2's own 3 candidates for that point were [80%-of-frame, an 11%
+    # candidate that turned out to be a noisy garbage mask, 53%-of-frame] --
+    # none usable. A box around the whole plant (leaves+pot), same fix
+    # pattern as the person case above, gave a clean result instead.
+    {"name": "plant_forest", "object": "data/objects/plant.jpg", "box": (350, 100, 1280, 1900),
+     "bg": "data/backgrounds/forest_path.jpg", "target_h_frac": 0.35, "grounding": (0.5, 1.0), "pos_y_frac": 0.88},
 ]
 
 for case in CASES:
@@ -45,7 +66,10 @@ for case in CASES:
         bg_h, bg_w = bg.shape[:2]
 
         print("  [2] segmenting...")
-        mask = segment(photo, point=case["point"])
+        if "box" in case:
+            mask = segment(photo, box=case["box"])
+        else:
+            mask = segment(photo, point=case["point"])
         print("      mask px:", mask.sum())
 
         print("  [3] matting...")
@@ -58,12 +82,12 @@ for case in CASES:
         print("  [5] placing...")
         ys, xs = (alpha > 0.02).nonzero()
         crop_h = ys.max() - ys.min()
-        target_h_px = int(bg_h * 0.45)
+        target_h_px = int(bg_h * case["target_h_frac"])
         scale = target_h_px / crop_h
         placement = Placement(
-            position=(bg_w // 2, int(bg_h * 0.85)),
+            position=(bg_w // 2, int(bg_h * case["pos_y_frac"])),
             scale=scale,
-            grounding_point=(0.5, 1.0),
+            grounding_point=case["grounding"],
         )
         result = transform_subject(clean_rgb, alpha, (bg_w, bg_h), placement)
 
